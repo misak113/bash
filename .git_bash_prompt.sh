@@ -15,14 +15,12 @@ CYAN="\[\033[0;36m\]"
 WHITE="\[\033[0;37m\]"
 
 # PS1 Prompt variables
-USER="\u"
-HOST="\h"
-TIME12H="\T"
-TIME12A="\@"
-PATHSHORT="\W"
-PATHFULL="\w"
-NEWLINE="\n"
-JOBS="\j"
+#TIME12H="\T"
+#TIME12A="\@"
+#PATHSHORT="\W"
+#PATHFULL="\w"
+#NEWLINE="\n"
+#JOBS="\j"
 
 __git_relative_dir() {
   local dirname
@@ -56,8 +54,8 @@ __git_remote_uri() {
 # This function generates the prompt, depending on Git's status...
 function __git_prompt()
 {
-#  local pre_prompt="${USER}@${HOST}"
-  local pre_prompt="${YELLOW}${USER}${RESET}${WHITE}@${PURPLE}${HOST}${RESET}"
+#  local pre_prompt="\u@\h"
+  local pre_prompt="${YELLOW}\u${RESET}${WHITE}@${PURPLE}\h${RESET}"
 
   git branch &>/dev/null
   if [ "$?" -eq "0" ]; then
@@ -76,7 +74,7 @@ function __git_prompt()
     fi
   # @2 - Prompt when not in GIT repo
   else
-    PS1="$pre_prompt ${PATHFULL}${RESET}\n\$ "; \
+    PS1="$pre_prompt \w${RESET}\n\$ "; \
   fi
 }
 
