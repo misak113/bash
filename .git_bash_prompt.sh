@@ -1,5 +1,5 @@
 # Bash PS1 for Git repositories showing branch and relative path inside 
-# the Repository
+# the Repository with git status on the right side
 
 # Reset
 RESET="\[\033[0m\]"
@@ -13,6 +13,11 @@ BLUE="\[\033[0;34m\]"
 PURPLE="\[\033[0;35m\]"
 CYAN="\[\033[0;36m\]"
 WHITE="\[\033[0;37m\]"
+
+# Bright Colors
+BRIGHT_GREEN="\[\033[1;32m\]"
+BRIGHT_RED="\[\033[1;31m\]"
+BRIGHT_YELLOW="\[\033[1;33m\]"
 
 # PS1 Prompt variables
 #TIME12H="\T"
@@ -51,6 +56,68 @@ __git_remote_uri() {
   fi
 }
 
+__git_status_counts() {
+  local staged=0
+  local modified=0
+  local untracked=0
+  local ahead=0
+  local behind=0
+  
+  # Get git status in porcelain format for parsing
+  while IFS= read -r line; do
+    local x="${line:0:1}"
+    local y="${line:1:1}"
+    
+    # Staged files (index changes)
+    if [[ "$x" =~ [MADRC] ]]; then
+      ((staged++))
+    fi
+    
+    # Modified/deleted files (working tree changes)
+    if [[ "$y" =~ [MD] ]]; then
+      ((modified++))
+    fi
+    
+    # Untracked files
+    if [[ "$x" == "?" ]]; then
+      ((untracked++))
+    fi
+  done < <(git status --porcelain 2>/dev/null)
+  
+  # Get ahead/behind info
+  local upstream=$(git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null)
+  if [ -n "$upstream" ]; then
+    local counts=$(git rev-list --left-right --count HEAD...$upstream 2>/dev/null)
+    ahead=$(echo "$counts" | cut -f1)
+    behind=$(echo "$counts" | cut -f2)
+  fi
+  
+  # Build status string
+  local status_str=""
+  
+  if [ $ahead -gt 0 ]; then
+    status_str+="↑$ahead "
+  fi
+  
+  if [ $behind -gt 0 ]; then
+    status_str+="↓$behind "
+  fi
+  
+  if [ $staged -gt 0 ]; then
+    status_str+="\033[1;32m●$staged\033[0m "
+  fi
+  
+  if [ $modified -gt 0 ]; then
+    status_str+="\033[1;33m●$modified\033[0m "
+  fi
+  
+  if [ $untracked -gt 0 ]; then
+    status_str+="\033[1;31m●$untracked\033[0m"
+  fi
+  
+  echo -e "$status_str"
+}
+
 # This function generates the prompt, depending on Git's status...
 function __git_prompt()
 {
@@ -64,13 +131,28 @@ function __git_prompt()
     local post_prompt=" $git_root_relative_to_home_wd/$YELLOW$(__git_relative_dir)$RESET"
     local remote_prompt=" $BLUE$(__git_remote_uri)$RESET"
     local last_prompt=" \n\$ "
+    
+    # Get git status for right side
+    local git_status_right="$(__git_status_counts)"
+    
+    # Calculate position for right side
+    # Save cursor, move to column, print status, restore cursor
+    local right_prompt=""
+    if [ -n "$git_status_right" ]; then
+      # Remove ANSI codes for length calculation
+      local status_length=$(echo -e "$git_status_right" | sed 's/\x1b\[[0-9;]*m//g' | wc -m)
+      local cols=$(tput cols)
+      local position=$((cols - status_length + 1))
+      right_prompt="\[\033[s\]\[\033[${position}G\]${git_status_right}\[\033[u\]"
+    fi
+    
     git status | grep "nothing to commit" > /dev/null 2>&1
     if [ "$?" -eq "0" ]; then
       # Clean repository, show it in green..
-      PS1="$pre_prompt${GREEN}$git_prompt${RESET}$post_prompt$remote_prompt$last_prompt"
+      PS1="${right_prompt}$pre_prompt${GREEN}$git_prompt${RESET}$post_prompt$remote_prompt$last_prompt"
     else
       # Repository dirty, show in red...
-      PS1="$pre_prompt${RED}$git_prompt${RESET}$post_prompt$remote_prompt$last_prompt"
+      PS1="${right_prompt}$pre_prompt${RED}$git_prompt${RESET}$post_prompt$remote_prompt$last_prompt"
     fi
   # @2 - Prompt when not in GIT repo
   else
