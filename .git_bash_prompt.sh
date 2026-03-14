@@ -56,6 +56,21 @@ __git_remote_uri() {
   fi
 }
 
+__clamp_path() {
+  local path="$1"
+  local max_len=20
+  
+  if [ ${#path} -le $max_len ]; then
+    echo "$path"
+  else
+    # Take first 2 chars and last (max_len - 5) chars with "..." in between
+    local prefix="${path:0:2}"
+    local suffix_len=$((max_len - 5))
+    local suffix="${path: -$suffix_len}"
+    echo "${prefix}...${suffix}"
+  fi
+}
+
 __git_status_counts() {
   local staged=0
   local modified=0
@@ -63,24 +78,54 @@ __git_status_counts() {
   local ahead=0
   local behind=0
   
+  # Arrays to store file info
+  local -a staged_files=()
+  local -a modified_files=()
+  local -a untracked_files=()
+  
   # Get git status in porcelain format for parsing
   while IFS= read -r line; do
     local x="${line:0:1}"
     local y="${line:1:1}"
+    local file="${line:3}"
+    
+    # Handle renames (format: "R  old -> new")
+    if [[ "$file" == *" -> "* ]]; then
+      file="${file##* -> }"
+    fi
+    
+    local icon=""
+    local color=""
     
     # Staged files (index changes)
     if [[ "$x" =~ [MADRC] ]]; then
       ((staged++))
+      case "$x" in
+        A|?) icon="+" ;;
+        D) icon="-" ;;
+        M|R|C) icon="~" ;;
+      esac
+      color="\033[1;32m" # bright green
+      staged_files+=("${color}$(__clamp_path "$file") ${icon}\033[0m")
     fi
     
     # Modified/deleted files (working tree changes)
     if [[ "$y" =~ [MD] ]]; then
       ((modified++))
+      case "$y" in
+        D) icon="-" ;;
+        M) icon="~" ;;
+      esac
+      color="\033[1;33m" # bright yellow
+      modified_files+=("${color}$(__clamp_path "$file") ${icon}\033[0m")
     fi
     
     # Untracked files
     if [[ "$x" == "?" ]]; then
       ((untracked++))
+      icon="+"
+      color="\033[1;31m" # bright red
+      untracked_files+=("${color}$(__clamp_path "$file") ${icon}\033[0m")
     fi
   done < <(git status --porcelain 2>/dev/null)
   
@@ -92,7 +137,37 @@ __git_status_counts() {
     behind=$(echo "$counts" | cut -f2)
   fi
   
-  # Build status string
+  # Combine all files in order: staged, modified, untracked
+  local -a all_files=("${staged_files[@]}" "${modified_files[@]}" "${untracked_files[@]}")
+  local total_files=${#all_files[@]}
+  
+  # Build file list (max 5 lines)
+  local file_list=""
+  local max_files=5
+  local show_files=$total_files
+  local show_ellipsis=false
+  
+  if [ $total_files -gt $max_files ]; then
+    show_files=$max_files
+    show_ellipsis=true
+  fi
+  
+  # Add ellipsis if needed
+  if [ "$show_ellipsis" = true ]; then
+    file_list="...\n"
+  fi
+  
+  # Add files (newest/last ones if truncated)
+  local start_idx=0
+  if [ $total_files -gt $max_files ]; then
+    start_idx=$((total_files - max_files))
+  fi
+  
+  for ((i=start_idx; i<total_files && i<start_idx+max_files; i++)); do
+    file_list+="${all_files[$i]}\n"
+  done
+  
+  # Build summary status string
   local status_str=""
   
   if [ $ahead -gt 0 ]; then
@@ -115,7 +190,12 @@ __git_status_counts() {
     status_str+="\033[1;31m●$untracked\033[0m"
   fi
   
-  echo -e "$status_str"
+  # Combine file list and status summary
+  if [ -n "$file_list" ]; then
+    echo -e "${file_list}${status_str}"
+  else
+    echo -e "$status_str"
+  fi
 }
 
 # This function generates the prompt, depending on Git's status...
@@ -135,15 +215,54 @@ function __git_prompt()
     # Get git status for right side
     local git_status_right="$(__git_status_counts)"
     
-    # Calculate position for right side
-    # Save cursor, move to column, print status, restore cursor
+    # Calculate position for right side (multi-line)
     local right_prompt=""
     if [ -n "$git_status_right" ]; then
-      # Remove ANSI codes for length calculation
-      local status_length=$(echo -e "$git_status_right" | sed 's/\x1b\[[0-9;]*m//g' | wc -m)
       local cols=$(tput cols)
-      local position=$((cols - status_length + 1))
-      right_prompt="\[\033[s\]\[\033[${position}G\]${git_status_right}\[\033[u\]"
+      local IFS=$'\n'
+      local -a status_lines=($git_status_right)
+      local num_lines=${#status_lines[@]}
+      local clear_width=30  # Increased to clear icons and file paths
+      local clear_rows=100  # Clear many rows to ensure complete cleanup
+      
+      # Build right-aligned multi-line output
+      # Save cursor, move up, clear right side, print lines, restore cursor
+      right_prompt="\[\033[s\]"
+      
+      # Move up to start clearing from way above
+      right_prompt+="\[\033[${clear_rows}A\]"
+      
+      # Clear the right side for many lines
+      for ((i=0; i<clear_rows; i++)); do
+        local clear_pos=$((cols - clear_width + 1))
+        right_prompt+="\[\033[${clear_pos}G\]"
+        right_prompt+="\[\033[K\]" # Clear from cursor to end of line
+        right_prompt+="\[\033[1B\]"
+      done
+      
+      # Move back to original position
+      right_prompt+="\[\033[u\]\[\033[s\]"
+      
+      # Move up to the first line position for printing status
+      if [ $num_lines -gt 1 ]; then
+        right_prompt+="\[\033[$((num_lines - 1))A\]"
+      fi
+      
+      # Now print the status lines
+      for ((i=0; i<num_lines; i++)); do
+        local line="${status_lines[$i]}"
+        # Remove ANSI codes for length calculation
+        local line_length=$(echo -e "$line" | sed 's/\x1b\[[0-9;]*m//g' | wc -m)
+        local position=$((cols - line_length + 1))
+        
+        right_prompt+="\[\033[${position}G\]${line}"
+        
+        # Move down to next line (except for the last line)
+        if [ $i -lt $((num_lines - 1)) ]; then
+          right_prompt+="\[\033[1B\]"
+        fi
+      done
+      right_prompt+="\[\033[u\]"
     fi
     
     git status | grep "nothing to commit" > /dev/null 2>&1
