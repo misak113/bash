@@ -55,7 +55,7 @@ __git_remote_uri() {
 function __git_prompt()
 {
 #  local pre_prompt="\u@\h"
-  local pre_prompt="${YELLOW}\u${RESET}${WHITE}@${PURPLE}\h${RESET}"
+  local pre_prompt="${YELLOW}\u${RESET}${WHITE}@${CYAN}\h${RESET}"
 
   git branch &>/dev/null
   if [ "$?" -eq "0" ]; then
