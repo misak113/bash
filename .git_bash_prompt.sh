@@ -167,7 +167,7 @@ __git_status_counts() {
     file_list+="${all_files[$i]}\n"
   done
   
-  # Build summary status string
+  # Build summary status string (shows counts for entire repo)
   local status_str=""
   
   if [ $ahead -gt 0 ]; then
@@ -190,12 +190,39 @@ __git_status_counts() {
     status_str+="\033[1;31m●$untracked\033[0m"
   fi
   
-  # Combine file list and status summary
-  if [ -n "$file_list" ]; then
-    echo -e "${file_list}${status_str}"
-  else
-    echo -e "$status_str"
+  # Build output with ASCII frame (40 chars wide total)
+  local output=""
+  
+  # Only output if there's something to show
+  if [ -z "$file_list" ] && [ -z "$status_str" ]; then
+    return
   fi
+  
+  # Top border
+  output+="┌──────────────────────────────────────┐\n"
+  
+  # File list lines
+  if [ -n "$file_list" ]; then
+    local IFS=$'\n'
+    local -a file_lines
+    while IFS= read -r line; do
+      [ -n "$line" ] && file_lines+=("$line")
+    done <<< "$file_list"
+    
+    for line in "${file_lines[@]}"; do
+      output+="${line}\n"
+    done
+  fi
+  
+  # Status summary line
+  if [ -n "$status_str" ]; then
+    output+="${status_str}\n"
+  fi
+  
+  # Bottom border
+  output+="└──────────────────────────────────────┘"
+  
+  echo -e "$output"
 }
 
 # This function generates the prompt, depending on Git's status...
@@ -222,7 +249,7 @@ function __git_prompt()
       local IFS=$'\n'
       local -a status_lines=($git_status_right)
       local num_lines=${#status_lines[@]}
-      local clear_width=30  # Increased to clear icons and file paths
+      local clear_width=42  # Frame is 40 chars, add extra for safety
       local clear_rows=100  # Clear many rows to ensure complete cleanup
       
       # Build right-aligned multi-line output
@@ -243,10 +270,8 @@ function __git_prompt()
       # Move back to original position
       right_prompt+="\[\033[u\]\[\033[s\]"
       
-      # Move up to the first line position for printing status
-      if [ $num_lines -gt 1 ]; then
-        right_prompt+="\[\033[$((num_lines - 1))A\]"
-      fi
+      # Move up to the first line position for printing status (one extra line up)
+      right_prompt+="\[\033[${num_lines}A\]"
       
       # Now print the status lines
       for ((i=0; i<num_lines; i++)); do
